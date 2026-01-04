@@ -120,6 +120,7 @@ class CacheEngineKey:
     world_size: int
     worker_id: int
     chunk_hash: int
+    chunk_prefix_hash: int
     request_configs: Optional[dict] = None
 
     def __post_init__(self):
@@ -141,6 +142,7 @@ class CacheEngineKey:
                 self.world_size,
                 self.worker_id,
                 self.chunk_hash,
+                #self.chunk_prefix_hash,
                 self.tags,
             )
         )
@@ -153,6 +155,7 @@ class CacheEngineKey:
                 and self.world_size == other.world_size
                 and self.worker_id == other.worker_id
                 and self.chunk_hash == other.chunk_hash
+                #and self.chunk_prefix_hash == other.chunk_prefix_hash
                 and self.tags == other.tags
             )
 
@@ -179,6 +182,7 @@ class CacheEngineKey:
                     self.world_size,
                     self.worker_id,
                     self.chunk_hash,
+                    self.chunk_prefix_hash,
                     self.request_configs,
                     layer_id,
                 )
@@ -193,6 +197,7 @@ class CacheEngineKey:
             self.world_size,
             self.worker_id,
             self.chunk_hash,
+            self.chunk_prefix_hash,
             self.request_configs,
             0,
         )
@@ -217,6 +222,7 @@ class CacheEngineKey:
             int(parts[2]),
             int(parts[3]),
             int(parts[4], 16),
+            int(parts[5], 16),
             request_configs,
         )
 
@@ -229,6 +235,8 @@ class CacheEngineKey:
             "world_size": self.world_size,
             "worker_id": self.worker_id,
             "chunk_hash": self.chunk_hash,
+            "chunk_prefix_hash": self.chunk_prefix_hash,
+            "request_configs": self.request_configs,
         }
         if self.request_configs is not None and len(self.request_configs) != 0:
             msg["request_configs"] = [
@@ -252,6 +260,7 @@ class CacheEngineKey:
             world_size=d["world_size"],
             worker_id=d["worker_id"],
             chunk_hash=d["chunk_hash"],
+            chunk_prefix_hash=d["chunk_prefix_hash"],
             request_configs=request_configs,
         )
 
@@ -270,6 +279,7 @@ class LayerCacheEngineKey(CacheEngineKey):
                 self.world_size,
                 self.worker_id,
                 self.chunk_hash,
+                #self.chunk_prefix_hash,
                 self.tags,
                 self.layer_id,
             )
@@ -302,6 +312,7 @@ class LayerCacheEngineKey(CacheEngineKey):
                     self.world_size,
                     self.worker_id,
                     self.chunk_hash,
+                    self.chunk_prefix_hash,
                     self.request_configs,
                     layer_id,
                 )
@@ -327,8 +338,9 @@ class LayerCacheEngineKey(CacheEngineKey):
             int(parts[2]),
             int(parts[3]),
             int(parts[4], 16),
+            int(parts[5], 16),
             request_configs,
-            int(parts[5]),
+            int(parts[6]),
         )
 
 
