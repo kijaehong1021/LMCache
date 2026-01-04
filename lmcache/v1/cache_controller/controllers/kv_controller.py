@@ -159,7 +159,7 @@ class KVController:
     async def lookup(self, msg: LookupMsg) -> LookupRetMsg:
         tokens = msg.tokens
         layout_info = {}
-        for start, end, key in self.token_database.process_tokens(
+        for start, end, [key, prefix_key] in self.token_database.process_tokens(
             tokens, make_key=False
         ):
             if key not in self.kv_pool:

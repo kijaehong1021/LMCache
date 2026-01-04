@@ -81,11 +81,25 @@ class LMCBlender:
             self.metadata.positions = torch.arange(
                 q.shape[0], device=q.device, dtype=torch.int64
             )
+        
+        #logger.info(f"[LMCache,kjhong,blender,process_qkv], layer_id: {layer_id}, q shape: {q.shape}, k shape: {k.shape}")
         layer = self.layerwise_model.vllm_model.model.layers[layer_id]
         attn_layer = layer.self_attn
         q, k = attn_layer.rotary_emb(self.metadata.positions, q, k)
 
+
         if layer_id in self.common_metadata.check_layers:
+            # === New implementation: consider existing_token_mask ===
+            # Move existing_token_mask to the same device as q, k
+            existing_token_mask_gpu = self.existing_token_mask.to(q.device)
+            
+            # Indices where existing_token_mask == False (new tokens) - must be included
+            new_token_indices = torch.where(~existing_token_mask_gpu)[0]
+            
+            # Indices where existing_token_mask == True (existing tokens) - select top-k from these
+            existing_token_indices = torch.where(existing_token_mask_gpu)[0]
+            
+            # Calculate diff_k for all tokens
             diff_k = torch.sum(
                 (k.to(torch.float32) - old_k.to(torch.float32)) ** 2, dim=[1]
             )
@@ -93,11 +107,45 @@ class LMCBlender:
 
             assert self.common_metadata.recomp_ratios is not None
 
-            # TODO(Jiayi): remove `[0]` hardcode
-            topk_num = int(total_len * self.common_metadata.recomp_ratios[0])
-
-            top_indices = torch.topk(diff_k, k=topk_num).indices
+            # Select top-k from existing tokens only
+            if len(existing_token_indices) > 0:
+                existing_diff_k = diff_k[existing_token_indices]
+                # Calculate topk_num based on existing_token_indices count
+                # TODO(Jiayi): remove `[0]` hardcode
+                num_from_existing = int(len(existing_token_indices) * self.common_metadata.recomp_ratios[0])                
+                if num_from_existing > 0:
+                    existing_top_indices_local = torch.topk(existing_diff_k, k=num_from_existing).indices
+                    existing_top_indices = existing_token_indices[existing_top_indices_local]
+                else:
+                    existing_top_indices = torch.tensor([], dtype=torch.long, device=q.device)
+            else:
+                existing_top_indices = torch.tensor([], dtype=torch.long, device=q.device)
+            
+            # Combine new_token_indices and existing_top_indices
+            if len(new_token_indices) > 0 and len(existing_top_indices) > 0:
+                top_indices = torch.cat([new_token_indices, existing_top_indices])
+            elif len(new_token_indices) > 0:
+                top_indices = new_token_indices
+            elif len(existing_top_indices) > 0:
+                top_indices = existing_top_indices
+            else:
+                top_indices = torch.tensor([], dtype=torch.long, device=q.device)
+            
             top_indices, _ = torch.sort(top_indices)
+            
+            # === Old implementation (commented out) ===
+            # diff_k = torch.sum(
+            #     (k.to(torch.float32) - old_k.to(torch.float32)) ** 2, dim=[1]
+            # )
+            # total_len = diff_k.shape[0]
+            #
+            # assert self.common_metadata.recomp_ratios is not None
+            #
+            # # TODO(Jiayi): remove `[0]` hardcode
+            # topk_num = int(total_len * self.common_metadata.recomp_ratios[0])
+            #
+            # top_indices = torch.topk(diff_k, k=topk_num).indices
+            # top_indices, _ = torch.sort(top_indices)
 
             k, v = k[top_indices], v[top_indices]
             q = q[top_indices]
@@ -107,7 +155,7 @@ class LMCBlender:
 
             self.metadata.imp_indices = top_indices
             self.metadata.positions = self.metadata.positions[top_indices]
-            attn_output = attn_output[:topk_num]
+            attn_output = attn_output[:len(top_indices)]
 
             attn_metadata.update_from_top_indices(top_indices)
 
@@ -132,8 +180,14 @@ class LMCBlender:
 
         # TODO(Jiayi): store is currently not included in this function
 
+        # === old implementation ====
+        # layerwise_model_executor = self.layerwise_model.compute_layer(tokens, **kwargs)
+        # layerwise_retriever = self.cache_engine.retrieve_layer(tokens, mask, **kwargs)
+        # === new implementation ====
+        self.existing_token_mask = torch.zeros(len(tokens), dtype=torch.bool, device="cpu")
         layerwise_model_executor = self.layerwise_model.compute_layer(tokens)
-        layerwise_retriever = self.cache_engine.retrieve_layer(tokens, mask, **kwargs)
+        layerwise_retriever = self.cache_engine.retrieve_layer(tokens, mask, self.existing_token_mask, **kwargs)
+        # === end of old implementation ====
 
         next(layerwise_retriever)
         yield

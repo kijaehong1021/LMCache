@@ -116,6 +116,10 @@ class LMCacheLookupClient(LookupClientInterface):
         lookup_id: str,
         request_configs: Optional[dict] = None,
     ) -> Optional[int]:
+        #print("[LMCacheLookupClient, lookup] lookup_id: %s", lookup_id)
+        #import traceback
+        #traceback.print_stack()
+        
         cached_num_hit_toks = self.reqs_status.get(lookup_id, None)
         if cached_num_hit_toks is not None:
             return cached_num_hit_toks
@@ -134,7 +138,7 @@ class LMCacheLookupClient(LookupClientInterface):
         if not self.enable_blending:
             hashes = []
             offsets = []
-            for start, end, key in self.token_database.process_tokens(
+            for start, end, [key, prefix_key] in self.token_database.process_tokens(
                 token_ids, make_key=False
             ):
                 hashes.append(key)

@@ -224,6 +224,10 @@ class LMCacheEngine:
             "Either 'tokens' or 'hashes' must be provided."
         )
 
+        assert hashes is None, (
+            "we consider that hashes are not supported for now"
+        )
+
         monitor_req_id = self.stats_monitor.on_store_request(num_to_store_tokens)
 
         starts = []
@@ -354,9 +358,13 @@ class LMCacheEngine:
             assert isinstance(key, CacheEngineKey)
 
             keys_multi_layer = key.split_layers(self.num_layers)
+            #logger.info("[LMCache,kjhong,store_layer], start, end, key: %s, %s, %s", start, end, key)
             # Only check the first layer
             if self.storage_manager.contains(keys_multi_layer[0]):
                 continue
+            #logger.info("[LMCache,kjhong,store_layer], not contains")
+            
+            
 
             # Allocate the memory object
             num_tokens = end - start
@@ -529,6 +537,9 @@ class LMCacheEngine:
         self,
         tokens: Union[torch.Tensor, list[int]],
         mask: Optional[torch.Tensor] = None,
+        # === new implementation ====
+        ret_mask: Optional[torch.Tensor] = None,
+        # === end of new implementation ====
         **kwargs,
     ) -> Generator[Optional[torch.Tensor], None, None]:
         """
@@ -560,7 +571,12 @@ class LMCacheEngine:
             num_required_tokens = len(tokens)
         monitor_req_id = self.stats_monitor.on_retrieve_request(num_required_tokens)
 
-        ret_mask = torch.zeros(len(tokens), dtype=torch.bool, device="cpu")
+        # === old implementation ===
+        #ret_mask = torch.zeros(len(tokens), dtype=torch.bool, device="cpu")
+        # === new implementation ====
+        if ret_mask is None:
+            ret_mask = torch.zeros(len(tokens), dtype=torch.bool, device="cpu")
+        # === end of new implementation ====
 
         starts = []
         ends = []
@@ -578,13 +594,20 @@ class LMCacheEngine:
 
             keys_multi_layer = key.split_layers(self.num_layers)
 
+            # ==== old implementation ====
             # NOTE: Only check the first layer
+            # if not self.storage_manager.contains(keys_multi_layer[0]):
+            #    break
+            # === new implementation ====
             if not self.storage_manager.contains(keys_multi_layer[0]):
-                break
-
+                continue
+            # ==== end of new implementation ====
+            
             starts.append(start)
             ends.append(end)
             keys.append(keys_multi_layer)
+
+            # logger.info("[LMCache,kjhong,retrieve_layer], start, end, key: %s, %s, %s", start, end, key)
 
             ret_mask[start:end] = True
 
@@ -682,6 +705,8 @@ class LMCacheEngine:
         :return: An int indicating how many prefix tokens are cached.
         """
 
+        # logger.info("[Lookup] lookup_id: %s, pin: %s", lookup_id, str(pin))
+
         if tokens is not None:
             lookup_request_id = self.stats_monitor.on_lookup_request(len(tokens))
         else:
@@ -713,6 +738,7 @@ class LMCacheEngine:
                             key_single_layer, search_range, pin
                         ):
                             found = True
+                    # logger.info("[LMCache,kjhong,lookup], start, end, found, key: %s, %s, %s, %s", start, end, found, key)
                     if found:
                         if pin:
                             assert lookup_id is not None, (
@@ -723,7 +749,11 @@ class LMCacheEngine:
                             )
                         res = end
                         continue
-                    return res
+                # ==== old implementation ====
+                #    return res
+                # ==== new implementation ====
+                return res
+
             else:
                 chunk_info_list = []
                 keys = []

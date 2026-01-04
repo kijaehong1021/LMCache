@@ -800,6 +800,9 @@ class LMCacheConnectorV1Impl:
             The number of elements in kv_caches and layer_names should be
             the same.
         """
+        #print("[LMCacheConnectorV1Impl, start_load_kv]")
+        #import traceback
+        #traceback.print_stack()
         self.current_layer = 0
 
         if len(self.kv_caches) == 0:
@@ -971,8 +974,14 @@ class LMCacheConnectorV1Impl:
 
             for idx, request in enumerate(connector_metadata.requests):
                 save_spec = request.save_spec
-                if save_spec is None or not save_spec.can_save:
+                
+                # === old implementation ====
+                # if save_spec is None: or not save_spec.can_save:
+                #     continue
+                # === new implementation ====
+                if save_spec is None:
                     continue
+                # === end of new implementation ====
 
                 token_ids = request.token_ids
                 assert isinstance(token_ids, list)
@@ -987,9 +996,15 @@ class LMCacheConnectorV1Impl:
                 if self.kv_role == "kv_producer":
                     skip_leading_tokens = 0
                 else:
-                    skip_leading_tokens = save_spec.skip_leading_tokens
+                    # === old implementation ====
+                    # skip_leading_tokens = save_spec.skip_leading_tokens
+                    # === new implementation ====
+                    # TODO: need to improve this
+                    skip_leading_tokens = 0
+                    # === end of new implementation ====
 
                     if skip_leading_tokens == len(token_ids):
+                        # logger.info("[LMCacheConnectorV1Impl, save_kv_layer], skip this request")
                         continue  # skip this request
                     # Align to lmcache chunk size
                     skip_leading_tokens = (

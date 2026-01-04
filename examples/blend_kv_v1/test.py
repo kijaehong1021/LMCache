@@ -21,11 +21,15 @@ def setup_environment_variables(
     use_disk: bool = False,
     blend_special_str: str = " # # ",
     enable_sparse: bool = False,
+    disable_async_loading: bool = False,
 ):
     # LMCache-related environment variables
 
     # LMCache is set to use 256 tokens per chunk
     os.environ["LMCACHE_CHUNK_SIZE"] = "256"
+    
+    # Increase vLLM engine initialization timeout (default is 60 seconds)
+    os.environ["VLLM_ENGINE_INIT_TIMEOUT"] = "300"  # 5 minutes
 
     # Blending related config
     os.environ["LMCACHE_ENABLE_BLENDING"] = "True"
@@ -33,10 +37,20 @@ def setup_environment_variables(
     os.environ["LMCACHE_USE_LAYERWISE"] = "True"
     os.environ["LMCACHE_BLEND_CHECK_LAYERS"] = "1"
     os.environ["LMCACHE_BLEND_RECOMPUTE_RATIOS"] = "0.15"
+    os.environ["LMCACHE_ENABLE_ASYNC_LOADING"] = "False"
 
+    # Build extra config JSON
+    extra_config = {}
     if enable_sparse:
         os.environ["VLLM_ATTENTION_BACKEND"] = "FLASHINFER"
-        os.environ["LMCACHE_EXTRA_CONFIG"] = '{"enable_sparse": true}'
+        extra_config["enable_sparse"] = True
+    
+    if disable_async_loading:
+        extra_config["async_loading"] = False
+    
+    if extra_config:
+        import json
+        os.environ["LMCACHE_EXTRA_CONFIG"] = json.dumps(extra_config)
 
     if use_disk:
         # Disable local CPU backend in LMCache
@@ -68,8 +82,8 @@ def build_llm_with_lmcache(lmcache_connector: str, model: str):
     llm_args = EngineArgs(
         model=model,
         kv_transfer_config=ktc,
-        max_model_len=32648,
-        gpu_memory_utilization=0.8,
+        max_model_len=2048,
+        gpu_memory_utilization=0.5,  # Reduced from 0.7 to avoid OOM
         enable_prefix_caching=False,
         enforce_eager=True,
     )
@@ -79,7 +93,12 @@ def build_llm_with_lmcache(lmcache_connector: str, model: str):
         yield llm
     finally:
         # Clean up lmcache backend
-        LMCacheEngineBuilder.destroy(ENGINE_NAME)
+        try:
+            LMCacheEngineBuilder.destroy(ENGINE_NAME)
+        except ValueError as e:
+            # Ignore if instance already destroyed or not found
+            if "not found" not in str(e):
+                raise
 
 
 def print_output(
@@ -88,6 +107,7 @@ def print_output(
     sampling_params: SamplingParams,
     req_str: str,
 ):
+    print("[print_output] prompt: ", req_str)
     start = time.time()
     outputs = llm.generate(
         prompts={"prompt_token_ids": prompt}, sampling_params=sampling_params
@@ -119,12 +139,18 @@ def parse_args():
     parser.add_argument(
         "--model",
         type=str,
-        default="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        default="TinyLlama/TinyLlama-1.1B-Chat-v1.0" #"mistralai/Mistral-7B-Instruct-v0.2",
     )
 
     parser.add_argument(
         "--enable-sparse",
         action="store_true",
+    )
+
+    parser.add_argument(
+        "--disable-async-loading",
+        action="store_true",
+        help="Disable async loading in LMCache",
     )
 
     return parser.parse_args()
@@ -137,19 +163,23 @@ def main():
     model = args.model
 
     setup_environment_variables(
-        args.use_disk, args.blend_special_str, args.enable_sparse
+        args.use_disk, args.blend_special_str, args.enable_sparse, args.disable_async_loading
     )
 
     tokenizer = AutoTokenizer.from_pretrained(model)
 
     with build_llm_with_lmcache(lmcache_connector, model) as llm:
         # Define the shared prompt and specific prompts
-        warmup_prompt = tokenizer.encode("Nice to meet you" * 500)[1:]
-        sys_prompt = tokenizer.encode("You are a very helpful assistant.")
-        chunk1_prompt = tokenizer.encode("Hello, how are you?" * 500)[1:]
-        chunk2_prompt = tokenizer.encode("Hello, what's up?" * 500)[1:]
-        chunk3_prompt = tokenizer.encode("Hi, what are you up to?" * 500)[1:]
+        warmup_prompt = tokenizer.encode("Nice to meet you" * 1000)[:16]
+        sys_prompt = tokenizer.encode(
+            "You are a very helpful assistant. "
+            "Please answer the question with instructions."
+        )
+        chunk1_prompt = tokenizer.encode("Hello, how are you?")[1:]
+        chunk2_prompt = tokenizer.encode("Hello, what's up?")[1:]
+        chunk3_prompt = tokenizer.encode("Hi, what are you up to?")[1:]
         blend_special_str = tokenizer.encode(os.getenv("LMCACHE_BLEND_SPECIAL_STR"))[1:]
+
         first_prompt = (
             sys_prompt
             + blend_special_str
@@ -157,33 +187,41 @@ def main():
             + blend_special_str
             + chunk2_prompt
             + blend_special_str
-            + chunk3_prompt
-            + blend_special_str
-            + tokenizer.encode("Hello, my name is")[1:]
+            #+ chunk3_prompt
+            #+ blend_special_str
+            + tokenizer.encode("\nAnswer:")[1:]
         )
 
         second_prompt = (
             sys_prompt
-            + blend_special_str
-            + chunk2_prompt
-            + blend_special_str
-            + chunk1_prompt
+            #+ blend_special_str
+            #+ chunk1_prompt
+            #+ blend_special_str
+            #+ chunk2_prompt
             + blend_special_str
             + chunk3_prompt
             + blend_special_str
-            + tokenizer.encode("Hello, how are you?")[1:]
+            + tokenizer.encode("\nAnswer:")[1:]
         )
 
         third_prompt = (
             sys_prompt
             + blend_special_str
-            + chunk3_prompt
+            + chunk2_prompt
             + blend_special_str
             + chunk1_prompt
             + blend_special_str
-            + chunk2_prompt
+            + chunk3_prompt
             + blend_special_str
-            + tokenizer.encode("Hello, what's up?")[1:]
+            + tokenizer.encode("\nAnswer:")[1:]
+        )
+
+        fourth_prompt = (
+            sys_prompt
+            + chunk2_prompt
+            + chunk1_prompt
+            + chunk3_prompt
+            + tokenizer.encode("\nAnswer:")[1:]
         )
 
         sampling_params = SamplingParams(temperature=0, top_p=0.95, max_tokens=1)
@@ -204,6 +242,11 @@ def main():
 
         # print the third output
         print_output(llm, third_prompt, sampling_params, "third")
+
+        time.sleep(1)
+
+        # print the fourth output
+        print_output(llm, fourth_prompt, sampling_params, "fourth")
 
 
 if __name__ == "__main__":

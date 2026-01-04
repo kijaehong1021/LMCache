@@ -111,7 +111,7 @@ class TokenDatabase(metaclass=abc.ABCMeta):
         raise NotImplementedError
 
     def _make_key_by_hash(
-        self, chunk_hash: int, request_configs: Optional[dict] = None
+        self, chunk_hash: int, chunk_prefix_hash: int, request_configs: Optional[dict] = None
     ):
         assert self.metadata is not None
         return CacheEngineKey(
@@ -120,6 +120,7 @@ class TokenDatabase(metaclass=abc.ABCMeta):
             self.metadata.world_size,
             self.metadata.worker_id,
             chunk_hash,
+            chunk_prefix_hash,
             request_configs,
         )
 
@@ -140,6 +141,9 @@ class TokenDatabase(metaclass=abc.ABCMeta):
         # Extra keys are for multi-modal inputs and
         # request specific metadata (e.g., LoRA ID).
         return self.hash_func((prefix_hash, tokens_tuple, extra_keys))
+
+    def _get_init_hash(self) -> int:
+        return NONE_HASH
 
 
 class ChunkedTokenDatabase(TokenDatabase):
@@ -178,8 +182,7 @@ class ChunkedTokenDatabase(TokenDatabase):
             self.chunk_size = 256
             self.save_unfull_chunk = True
 
-    def _get_init_hash(self) -> int:
-        return NONE_HASH
+
 
     def _chunk_tokens(
         self,
@@ -220,7 +223,7 @@ class ChunkedTokenDatabase(TokenDatabase):
         mask: Optional[torch.Tensor] = None,
         make_key: bool = True,
         request_configs: Optional[dict] = None,
-    ) -> Iterable[Tuple[int, int, Union[CacheEngineKey, int]]]:
+    ) -> Iterable[Tuple[int, int, Union[CacheEngineKey, [int,int]]]]:
         """Process the tokens/hashes and return the corresponding cache engine keys.
 
         :param Optional[Union[torch.Tensor, List[int]]] tokens: The tokens to process.
@@ -272,10 +275,10 @@ class ChunkedTokenDatabase(TokenDatabase):
                         yield (
                             start_idx,
                             end_idx,
-                            self._make_key_by_hash(hash_val, request_configs),
+                            self._make_key_by_hash(hash_val, hash_val, request_configs),
                         )
                     else:
-                        yield start_idx, end_idx, hash_val
+                        yield start_idx, end_idx, [hash_val, hash_val]
         elif hashes is not None:
             assert offsets is not None, (
                 "If hashes are provided, offsets must also be provided."
@@ -287,10 +290,10 @@ class ChunkedTokenDatabase(TokenDatabase):
                     yield (
                         start_idx,
                         end_idx,
-                        self._make_key_by_hash(hash_val, request_configs),
+                        self._make_key_by_hash(hash_val, hash_val,request_configs),
                     )
                 else:
-                    yield start_idx, end_idx, hash_val
+                    yield start_idx, end_idx, [hash_val, hash_val]
                 start_idx = end_idx
         else:
             raise ValueError("Either tokens or hashes must be provided.")
@@ -345,7 +348,7 @@ class SegmentTokenDatabase(TokenDatabase):
         mask: Optional[torch.Tensor] = None,
         make_key: bool = True,
         request_configs: Optional[dict] = None,
-    ) -> Iterable[Tuple[int, int, Union[CacheEngineKey, int]]]:
+    ) -> Iterable[Tuple[int, int, Union[CacheEngineKey, [int, int]]]]:
         """Process the tokens and return the corresponding cache engine keys.
 
         :param Union[torch.Tensor, List[int]] tokens: The tokens to process.
@@ -389,6 +392,7 @@ class SegmentTokenDatabase(TokenDatabase):
 
             token_chunks = self._fast_split_by_subtensor(tokens)
             start_idx = 0
+            prefix_hash = self._get_init_hash()
             for idx, token_chunk in enumerate(token_chunks):
                 token_chunk_len = len(token_chunk)
                 end_idx = start_idx + token_chunk_len
@@ -396,32 +400,108 @@ class SegmentTokenDatabase(TokenDatabase):
                     start_idx += self.sep_len
                     end_idx += self.sep_len
                 if start_idx >= num_falses:
+                    chunk_hash = self._hash_tokens(token_chunk)
+                    prefix_hash = self._hash_tokens(token_chunk, prefix_hash)
+
                     if make_key:
                         yield (
                             start_idx,
                             end_idx,
                             self._make_key_by_hash(
-                                self._hash_tokens(token_chunk), request_configs
+                                chunk_hash, prefix_hash, request_configs
                             ),
                         )
                     else:
-                        yield start_idx, end_idx, self._hash_tokens(token_chunk)
+                        yield start_idx, end_idx, [chunk_hash, prefix_hash]
                 start_idx = end_idx
         elif hashes is not None:
             assert offsets is not None, (
                 "If hashes are provided, offsets must also be provided."
             )
-            start_idx = 0
+            start_idx = 0    
             for hash_val, offset in zip(hashes, offsets, strict=False):
                 end_idx = start_idx + offset
                 if make_key:
                     yield (
                         start_idx,
                         end_idx,
-                        self._make_key_by_hash(hash_val, request_configs),
+                        self._make_key_by_hash(hash_val, hash_val, request_configs),
                     )
                 else:
-                    yield start_idx, end_idx, hash_val
+                    yield start_idx, end_idx, [hash_val, hash_val]
                 start_idx = end_idx
+                idx += 1
         else:
             raise ValueError("Either tokens or hashes must be provided.")
+
+
+# """
+# # TOKEN databse process_tokens 호출 부분
+
+# 실험 코드에서 호출되는 부분은 결국
+## retrieve_layer
+## lookup
+## store_layer
+
+
+# ## LMCacheEngine, store 호출 부분
+# ```
+# for start, end, key in self.token_database.process_tokens(
+#     tokens, hashes, offsets, mask, request_configs)
+# ```
+# ## LMCacheEngine, store_layer 호출 부분
+# ```
+# for start, end, key in self.token_database.process_tokens(
+#     tokens, mask, request_configs)
+# ```
+
+# ## LMCacheEngine, retrieve 호출 부분, -> _process_tokens_internal, _async_process_tokens_internal
+# ```
+# for start, end, key in self.token_database.process_tokens(
+#     tokens, mask, request_configs)
+# ```
+
+# ## LMCacheEngine, retrieve_layer 호출 부분
+# ```
+# for start, end, key in self.token_database.process_tokens(
+#     tokens, mask, request_configs)
+# ```
+
+# ## LMCacheEngine, lookup 호출 부분
+# ```
+# for start, end, key in self.token_database.process_tokens(
+#     tokens, hashes, offsets, request_configs)
+# ```
+
+# ## async_lookup_and_prefetch 호출 부분
+# ```
+# for start, end, key in self.token_database.process_tokens(
+#     tokens, hashes, offsets, request_configs)
+# ```
+
+# ## _clear 호출 부분
+# ```
+# for start, end, key in self.token_database.process_tokens(
+#     tokens, request_configs)
+# ```
+
+
+# ## KV controller, lookup 
+# ```
+# for start, end, key in self.token_database.process_tokens(
+#     tokens, make_key=False)
+# ```
+
+# ## lmcacheasynclookupclient, lookup
+# ```
+# for start, end, key in self.token_database.process_tokens(
+#     tokens, make_key=False)
+# ```
+
+# ## lmcachelookupclient, lookup
+# ```
+# for start, end, key in self.token_database.process_tokens(
+#     tokens, make_key=False)
+# ```
+
+# """
