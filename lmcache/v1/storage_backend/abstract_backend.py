@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
 
 class StorageBackendInterface(metaclass=abc.ABCMeta):
+    
     def __init__(
         self,
         dst_device: str = "cuda",
@@ -55,6 +56,13 @@ class StorageBackendInterface(metaclass=abc.ABCMeta):
             pinned in the storage backend.
 
         :return: True if the key exists, False otherwise.
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def get_key(self, key: CacheEngineKey) -> CacheEngineKey:
+        """
+        Get the key from the storage backend.
         """
         raise NotImplementedError
 

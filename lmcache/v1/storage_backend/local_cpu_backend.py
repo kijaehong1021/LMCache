@@ -55,6 +55,7 @@ class LocalCPUBackend(AllocatorBackendInterface):
 
         self.cache_policy = get_cache_policy(config.cache_policy)
         self.hot_cache = self.cache_policy.init_mutable_mapping()
+        self.keys = {}
 
         self.use_hot = config.local_cpu
         # NOTE: we keep the memory allocator argument for temporary
@@ -134,6 +135,7 @@ class LocalCPUBackend(AllocatorBackendInterface):
 
             memory_obj.ref_count_up()
             self.hot_cache[key] = memory_obj
+            self.keys[key] = key
 
             self.cache_policy.update_on_put(key)
 
@@ -236,6 +238,7 @@ class LocalCPUBackend(AllocatorBackendInterface):
 
         memory_obj = self.hot_cache.pop(key)
         memory_obj.ref_count_down()
+        self.keys.pop(key)
 
         if force:
             self.cache_policy.update_on_force_evict(key)
@@ -522,6 +525,7 @@ class LocalCPUBackend(AllocatorBackendInterface):
                                 old_mem_objs.append(self.hot_cache[key])
                                 self.cache_policy.update_on_force_evict(key)
                                 self.hot_cache.pop(key, None)
+                                self.keys.pop(key, None)
 
                             self.memory_allocator.batched_free(old_mem_objs)
 
@@ -621,6 +625,10 @@ class LocalCPUBackend(AllocatorBackendInterface):
         """
         with self.cpu_lock:
             return list(self.hot_cache.keys())
+
+    def get_key(self, key: CacheEngineKey) -> CacheEngineKey:
+        with self.cpu_lock:
+            return self.keys.get(key, None)
 
     def clear(self) -> int:
         """

@@ -539,6 +539,7 @@ class LMCacheEngine:
         mask: Optional[torch.Tensor] = None,
         # === new implementation ====
         ret_mask: Optional[torch.Tensor] = None,
+        prefix_cached_mask: Optional[torch.Tensor] = None,
         # === end of new implementation ====
         **kwargs,
     ) -> Generator[Optional[torch.Tensor], None, None]:
@@ -601,6 +602,15 @@ class LMCacheEngine:
             # === new implementation ====
             if not self.storage_manager.contains(keys_multi_layer[0]):
                 continue
+
+            stored_key = self.storage_manager.get_key(keys_multi_layer[0])
+            if keys_multi_layer[0].chunk_prefix_hash == stored_key.chunk_prefix_hash:
+                logger.info("[LMCache,kjhong], prefix cache hit! %s %s %s", start, end, keys_multi_layer[0].chunk_prefix_hash)
+                prefix_cached_mask[start:end] = True
+                pass
+
+            # if self.storage_manager.hot_cache[]
+            
             # ==== end of new implementation ====
             
             starts.append(start)

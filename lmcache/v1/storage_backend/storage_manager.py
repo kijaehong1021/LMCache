@@ -631,6 +631,12 @@ class StorageManager:
 
         return None
 
+    def get_key(self, key: CacheEngineKey) -> CacheEngineKey:
+        for backend_name, backend in self.storage_backends.items():
+            if backend_name == "LocalCPUBackend":
+                return backend.get_key(key)
+        return None
+
     def batched_contains(
         self,
         keys: List[CacheEngineKey],

@@ -207,9 +207,9 @@ def main():
         third_prompt = (
             sys_prompt
             + blend_special_str
-            + chunk2_prompt
-            + blend_special_str
             + chunk1_prompt
+            + blend_special_str
+            + chunk2_prompt
             + blend_special_str
             + chunk3_prompt
             + blend_special_str

@@ -89,15 +89,20 @@ class LMCBlender:
 
 
         if layer_id in self.common_metadata.check_layers:
-            # === New implementation: consider existing_token_mask ===
-            # Move existing_token_mask to the same device as q, k
+            # === New implementation: consider existing_token_mask and prefix_cached_mask ===
+            # Move existing_token_mask and prefix_cached_mask to the same device as q, k
             existing_token_mask_gpu = self.existing_token_mask.to(q.device)
+            prefix_cached_mask_gpu = self.prefix_cached_mask.to(q.device)
             
-            # Indices where existing_token_mask == False (new tokens) - must be included
-            new_token_indices = torch.where(~existing_token_mask_gpu)[0]
+            # Exclude tokens where prefix_cached_mask == True from selection
+            # Candidate tokens are those where prefix_cached_mask == False
+            candidate_mask = ~prefix_cached_mask_gpu
             
-            # Indices where existing_token_mask == True (existing tokens) - select top-k from these
-            existing_token_indices = torch.where(existing_token_mask_gpu)[0]
+            # Indices where existing_token_mask == False (new tokens) and not prefix_cached - must be included
+            new_token_indices = torch.where(~existing_token_mask_gpu & candidate_mask)[0]
+            
+            # Indices where existing_token_mask == True (existing tokens) and not prefix_cached - select top-k from these
+            existing_token_indices = torch.where(existing_token_mask_gpu & candidate_mask)[0]
             
             # Calculate diff_k for all tokens
             diff_k = torch.sum(
@@ -107,7 +112,7 @@ class LMCBlender:
 
             assert self.common_metadata.recomp_ratios is not None
 
-            # Select top-k from existing tokens only
+            # Select top-k from existing tokens only (excluding prefix_cached tokens)
             if len(existing_token_indices) > 0:
                 existing_diff_k = diff_k[existing_token_indices]
                 # Calculate topk_num based on existing_token_indices count
@@ -185,8 +190,9 @@ class LMCBlender:
         # layerwise_retriever = self.cache_engine.retrieve_layer(tokens, mask, **kwargs)
         # === new implementation ====
         self.existing_token_mask = torch.zeros(len(tokens), dtype=torch.bool, device="cpu")
+        self.prefix_cached_mask = torch.zeros(len(tokens), dtype=torch.bool, device="cpu")
         layerwise_model_executor = self.layerwise_model.compute_layer(tokens)
-        layerwise_retriever = self.cache_engine.retrieve_layer(tokens, mask, self.existing_token_mask, **kwargs)
+        layerwise_retriever = self.cache_engine.retrieve_layer(tokens, mask, self.existing_token_mask, self.prefix_cached_mask, **kwargs)
         # === end of old implementation ====
 
         next(layerwise_retriever)
