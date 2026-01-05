@@ -605,7 +605,7 @@ class LMCacheEngine:
 
             stored_key = self.storage_manager.get_key(keys_multi_layer[0])
             if keys_multi_layer[0].chunk_prefix_hash == stored_key.chunk_prefix_hash:
-                logger.info("[LMCache,kjhong], prefix cache hit! %s %s %s", start, end, keys_multi_layer[0].chunk_prefix_hash)
+                # logger.info("[LMCache,kjhong], prefix cache hit! %s %s %s", start, end, keys_multi_layer[0].chunk_prefix_hash)
                 prefix_cached_mask[start:end] = True
                 pass
 
